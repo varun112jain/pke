@@ -5,9 +5,11 @@
 from .readers import MinimalCoreNLPParser, PreProcessedTextReader, RawTextReader
 from collections import defaultdict
 from nltk.stem.snowball import SnowballStemmer as Stemmer
+from nltk.corpus import wordnet
 from nltk import RegexpParser
 from string import letters, digits, punctuation
 import os
+import re
 
 from unidecode import unidecode
 
@@ -459,6 +461,125 @@ class LoadFile(object):
                                        pos=sentence.pos[first:last+1],
                                        offset=shift+first,
                                        sentence_id=i)
+
+
+    def linguistically_motivated_selection(self):
+        """ Linguistically Motivated keyphrase candidate selection method. """
+
+        # define a restrictive grammar
+        grammar = """    
+                NP:
+                    {<JJ.*>?<NN.*>+}   # A?(Nc|Np)+
+            """
+
+        # pre-select candidates
+        self.grammar_selection(grammar=grammar)
+
+        # loop through the candidates
+        for k, v in self.candidates.items():
+
+            # if len(v.offsets) > 3:
+            #     continue
+
+            # valid surface forms
+            valid_forms = []
+
+            # loop through the surface forms of the candidate
+            for i in range(len(v.pos_patterns)):
+
+                # focus on candidates with a preposed adjective
+                if v.pos_patterns[i][0] in ['JJ', 'JJS', 'JJR']:
+
+                    # get the preposed adjective
+                    adj = v.surface_forms[i][0]
+
+                    #----------------------------------------------------------#
+                    # step 1: check for compound adjective
+                    #----------------------------------------------------------#
+                    if re.search('^[^\-]+(\-[^\-]+)+$', adj):
+                        valid_forms.append(i)
+                        continue
+                    #----------------------------------------------------------#
+
+                    #----------------------------------------------------------#
+                    # step 2: check for relational adjective
+                    #----------------------------------------------------------#
+                    # get the synsets of the adjective
+                    synsets = wordnet.synsets(adj, pos=wordnet.ADJ)
+
+                    # check if it has a pertainym
+                    if len(synsets) > 0:
+                        has_pertainym = False
+                        for synset in synsets:
+                            for lemma in synset.lemmas():
+                                if len(lemma.pertainyms()) > 0:
+                                    has_pertainym = True
+                                    break
+
+                        if has_pertainym:
+                            valid_forms.append(i)
+                            continue
+
+                    # back up strategy, maybe it is a noun in wordnet
+                    # if wordnet.synsets(adj, pos=wordnet.NOUN):
+                    #     valid_forms.append(i)
+                    #     continue
+
+                    # last strategy, check if it matches against known suffixes
+                    if re.search('(al|ant|ary|ic|ous|ive)$', adj):
+                        valid_forms.append(i)
+                        continue
+                    #----------------------------------------------------------#
+
+                    #----------------------------------------------------------#
+                    # step 3: filter out qualitative adjective
+                    #----------------------------------------------------------#
+                    wo_adj = ' '.join(v.lexical_form[1:])
+
+                    # get the number of occurrences with and w/o adjective
+                    freq_w_adj = len(v.offsets)
+
+                    freq_wo_adj = 0
+                    if self.candidates.has_key(wo_adj):
+                        freq_wo_adj = len(self.candidates[wo_adj].offsets)
+
+                    # if adjective is not informative
+                    if freq_wo_adj > freq_w_adj:
+
+                        # reinjecting information
+                        # by deleting the adjective
+                        self.add_candidate(words=v.surface_forms[i][1:],
+                                           stems=v.lexical_form[1:],
+                                           pos=v.pos_patterns[i][1:],
+                                           offset=v.offsets[i]+1,
+                                           sentence_id=v.sentence_ids[i])
+                        continue
+
+                    else:
+                        # what to do here ?
+                        valid_forms.append(i)
+                        continue
+                    #----------------------------------------------------------#
+
+                # keep candidate if it is non-modified
+                else:
+                    valid_forms.append(i)
+                    continue
+
+            # delete no surface forms are valids
+            if not valid_forms:
+                del self.candidates[k]
+                # print 'delete', k
+
+            # otherwise update the candidate data
+            else:
+                self.candidates[k].surface_forms = [v.surface_forms[i] for i in valid_forms]
+                self.candidates[k].offsets = [v.offsets[i] for i in valid_forms]
+                self.candidates[k].pos_patterns = [v.pos_patterns[i] for i in valid_forms]
+                self.candidates[k].sentence_ids = [v.sentence_ids[i] for i in valid_forms]
+
+                # if len(valid_forms) < len(v.pos_patterns):
+                #     print "update", k
 
 
     def candidate_filtering(self,
