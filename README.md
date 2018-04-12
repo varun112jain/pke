@@ -208,7 +208,8 @@ from string import punctuation
 input_dir = '/path/to/input/documents'
 
 # path to the DF counts dictionary, saved as a gzip tab separated values
-output_file = '/path/to/output/'
+# NOTE: unless you specify the output file as *.gz, you will encounter an error
+output_file = '/path/to/output/output_dict.gz'
 
 # compute df counts and store stem -> weight values
 compute_document_frequency(input_dir=input_dir,
